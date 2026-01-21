@@ -1,0 +1,14 @@
+# Voice Satellite Dependencies
+
+# WebSocket client
+aiohttp>=3.9.0
+
+# Audio
+pyaudio>=0.2.13
+numpy>=1.24.0
+
+# Wake word detection (Porcupine)
+# Free tier includes: alexa, bumblebee, computer, hey google, hey siri,
+#                     jarvis, ok google, picovoice, porcupine, terminator
+# Get free access key at: https://console.picovoice.ai/
+pvporcupine>=3.0.0
