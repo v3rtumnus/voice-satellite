@@ -6,9 +6,6 @@ venv/
 # Config
 config.env
 
-# Audio
-*.wav
-
 # OS
 .DS_Store
 
