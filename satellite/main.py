@@ -36,7 +36,7 @@ class Config:
     
     # Wake word
     wake_word_model: str = "jarvis"
-    wake_word_threshold: float = 0.5
+    wake_word_sensitivity: float = 0.5  # 0.0 to 1.0, higher = more sensitive (more false positives)
     wake_word_disabled: bool = False
     
     # Silence detection
@@ -55,7 +55,7 @@ class Config:
             device=os.getenv("DEVICE", os.getenv("HOSTNAME", "satellite")),
             sample_rate=int(os.getenv("SAMPLE_RATE", "16000")),
             wake_word_model=os.getenv("WAKE_WORD_MODEL", "jarvis"),
-            wake_word_threshold=float(os.getenv("WAKE_WORD_THRESHOLD", "0.5")),
+            wake_word_sensitivity=float(os.getenv("WAKE_WORD_SENSITIVITY", "0.5")),
             wake_word_disabled=os.getenv("WAKE_WORD_DISABLED", "").lower() in ("true", "1", "yes"),
             silence_threshold=int(os.getenv("SILENCE_THRESHOLD", "500")),
             silence_duration=float(os.getenv("SILENCE_DURATION", "1.5")),
@@ -122,15 +122,27 @@ class AudioPlayer:
         
         # Always resample to OUTPUT_RATE
         if sample_rate != self.OUTPUT_RATE:
-            logger.info(f"Resampling audio from {sample_rate}Hz to {self.OUTPUT_RATE}Hz")
+            logger.info(f"Resampling audio from {sample_rate}Hz to {self.OUTPUT_RATE}Hz (channels={channels})")
             audio_np = np.frombuffer(audio, dtype=np.int16)
             
-            # Calculate new length
-            new_length = int(len(audio_np) * self.OUTPUT_RATE / sample_rate)
+            # Handle stereo: reshape to (samples, channels)
+            if channels > 1:
+                audio_np = audio_np.reshape(-1, channels)
+                resampled_channels = []
+                for ch in range(channels):
+                    ch_data = audio_np[:, ch]
+                    new_length = int(len(ch_data) * self.OUTPUT_RATE / sample_rate)
+                    indices = np.linspace(0, len(ch_data) - 1, new_length)
+                    resampled_ch = np.interp(indices, np.arange(len(ch_data)), ch_data)
+                    resampled_channels.append(resampled_ch)
+                # Interleave channels back
+                resampled = np.column_stack(resampled_channels).flatten().astype(np.int16)
+            else:
+                # Mono
+                new_length = int(len(audio_np) * self.OUTPUT_RATE / sample_rate)
+                indices = np.linspace(0, len(audio_np) - 1, new_length)
+                resampled = np.interp(indices, np.arange(len(audio_np)), audio_np).astype(np.int16)
             
-            # Linear interpolation resampling
-            indices = np.linspace(0, len(audio_np) - 1, new_length)
-            resampled = np.interp(indices, np.arange(len(audio_np)), audio_np).astype(np.int16)
             audio = resampled.tobytes()
         
         stream = p.open(
@@ -327,12 +339,13 @@ class WakeWordDetector:
     def __init__(
         self,
         model: str = "jarvis",
-        threshold: float = 0.5,  # Not used by Porcupine, kept for compatibility
+        sensitivity: float = 0.5,  # 0.0 to 1.0, higher = more sensitive
         sample_rate: int = 16000,
         device_index: Optional[int] = None,
         access_key: Optional[str] = None,
     ):
         self.keyword = model.lower().replace("_", " ").replace("hey jarvis", "jarvis")
+        self.sensitivity = max(0.0, min(1.0, sensitivity))  # Clamp to 0-1
         self.sample_rate = sample_rate
         self.device_index = device_index
         self.access_key = access_key or os.getenv("PORCUPINE_ACCESS_KEY", "")
@@ -352,18 +365,20 @@ class WakeWordDetector:
             )
             self.keyword = "jarvis"
         
-        logger.info(f"Loading Porcupine with keyword: {self.keyword}")
+        logger.info(f"Loading Porcupine with keyword: {self.keyword}, sensitivity: {self.sensitivity}")
         
         if self.access_key:
             self._porcupine = pvporcupine.create(
                 access_key=self.access_key,
                 keywords=[self.keyword],
+                sensitivities=[self.sensitivity],
             )
         else:
             # Try without access key (limited free usage)
             try:
                 self._porcupine = pvporcupine.create(
                     keywords=[self.keyword],
+                    sensitivities=[self.sensitivity],
                 )
             except pvporcupine.PorcupineActivationError:
                 logger.error(
@@ -488,7 +503,7 @@ class VoiceSatellite:
         if not config.wake_word_disabled:
             self.wake_word = WakeWordDetector(
                 model=config.wake_word_model,
-                threshold=config.wake_word_threshold,
+                sensitivity=config.wake_word_sensitivity,
                 sample_rate=config.sample_rate,
             )
         
