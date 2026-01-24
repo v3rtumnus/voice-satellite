@@ -17,7 +17,7 @@ pipeline {
         REMOTE_DIR = '/opt/voice-satellite'
         
         // Directories to copy (relative to repo root)
-        COPY_DIRS = 'satellite,scripts,sounds'
+        COPY_DIRS = 'satellite,scripts'
         
         // Service to restart
         SERVICE_NAME = 'voice-satellite'
